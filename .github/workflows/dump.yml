@@ -1,0 +1,77 @@
+name: Dump map objects
+
+on:
+    # Weekly, a few hours after Jagex's usual Wednesday update window.
+    schedule:
+        - cron: "0 18 * * 3"
+    workflow_dispatch:
+        inputs:
+            force_commit:
+                description: "Commit even if only meta.json changed"
+                type: boolean
+                default: false
+
+# Only one dump at a time; a queued run would race on the same branch.
+concurrency:
+    group: dump
+    cancel-in-progress: false
+
+jobs:
+    dump:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  submodules: recursive
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+
+            - run: npm ci
+
+            # ~220 MB from OpenRS2. Not cached: a fresh cache is the point of the run.
+            - name: Download latest OSRS cache
+              run: npm run download-cache
+
+            - name: Dump
+              run: |
+                  VIEWER_COMMIT=$(git -C vendor/rs-map-viewer rev-parse HEAD)
+                  export VIEWER_COMMIT
+                  npm run dump
+
+            - name: Commit data
+              run: |
+                  git config user.name  "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git add data/
+
+                  # meta.json always changes (generatedAt), so ignore it when
+                  # deciding whether anything real moved.
+                  if git diff --cached --quiet -- data/ ':!data/meta.json' \
+                     && [ "${{ inputs.force_commit }}" != "true" ]; then
+                      echo "No data changes; skipping commit."
+                      git reset
+                      exit 0
+                  fi
+
+                  REVISION=$(node -p "require('./data/meta.json').revision")
+                  git add data/
+                  git commit -m "Update dump for cache rev ${REVISION}"
+                  git push
+
+            - name: Summary
+              if: always()
+              run: |
+                  if [ -f data/meta.json ]; then
+                      {
+                          echo '### Dump summary'
+                          echo '```json'
+                          node -p "JSON.stringify(require('./data/meta.json').counts, null, 2)"
+                          echo '```'
+                      } >> "$GITHUB_STEP_SUMMARY"
+                  fi

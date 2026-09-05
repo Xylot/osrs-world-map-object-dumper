@@ -1,0 +1,28 @@
+{
+    "name": "osrs-world-map-object-dumper",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Dumps every named OSRS map object, keyed by packed chunk id, from the game cache",
+    "scripts": {
+        "download-cache": "tsx scripts/download-cache.ts",
+        "dump": "tsx scripts/dump.ts",
+        "all": "npm run download-cache && npm run dump"
+    },
+    "dependencies": {
+        "@foxglove/wasm-bz2": "^0.1.1",
+        "adm-zip": "^0.5.10",
+        "bzip2": "^0.1.1",
+        "denque": "^2.1.0",
+        "gl-matrix": "^3.4.4",
+        "java-random": "^0.4.0",
+        "js-xxhash": "^2.0.0",
+        "pako": "^2.1.0"
+    },
+    "devDependencies": {
+        "@types/adm-zip": "^0.5.5",
+        "@types/node": "^20.11.0",
+        "@types/pako": "^2.0.3",
+        "tsx": "^4.7.0",
+        "typescript": "^5.3.0"
+    }
+}
