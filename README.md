@@ -119,11 +119,25 @@ npm run all
 [OpenRS2](https://archive.openrs2.org/) into `cache/` (gitignored), skipping the download if that
 same cache is already there. `npm run dump` writes `data/`. Takes a couple of minutes.
 
+`npm run check-cache` reports whether the committed dump is already current, without downloading
+anything.
+
 ## Automation
 
-`.github/workflows/dump.yml` runs Wednesdays at 18:00 UTC, after Jagex's usual update window, and on
-manual dispatch. It downloads a fresh cache, dumps, and commits `data/` only when something other
-than `meta.json` changed — `generatedAt` alone would otherwise produce a commit every week.
+`.github/workflows/dump.yml` runs daily at 18:00 UTC, and on manual dispatch.
+
+Each cache only needs dumping once, so the run starts with `npm run check-cache`: one small JSON
+fetch that compares the newest cache in the OpenRS2 archive against `cacheId` in `data/meta.json`.
+If they match, the run stops there — no 220 MB download, a few seconds of runner time. Everything
+expensive is gated behind that check.
+
+When a new cache does appear, it downloads, dumps, and commits. If the new cache produces byte-identical
+map data, it still commits `meta.json` alone so `cacheId` advances and the next day's run doesn't
+re-download the same cache. `meta.json` is excluded from the "did anything change?" test, since its
+`generatedAt` would otherwise make every run look like a change.
+
+Dispatch with **force** to re-dump a cache that's already been processed — useful after bumping the
+vendored submodule, where the same cache can decode differently.
 
 ## Credits
 

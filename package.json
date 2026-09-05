@@ -4,6 +4,7 @@
     "private": true,
     "description": "Dumps every named OSRS map object, keyed by packed chunk id, from the game cache",
     "scripts": {
+        "check-cache": "tsx scripts/check-cache.ts",
         "download-cache": "tsx scripts/download-cache.ts",
         "dump": "tsx scripts/dump.ts",
         "all": "npm run download-cache && npm run dump"

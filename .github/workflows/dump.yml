@@ -1,13 +1,13 @@
 name: Dump map objects
 
 on:
-    # Weekly, a few hours after Jagex's usual Wednesday update window.
+    # Daily. The check below is cheap, so most runs cost a few seconds and stop.
     schedule:
-        - cron: "0 18 * * 3"
+        - cron: "0 18 * * *"
     workflow_dispatch:
         inputs:
-            force_commit:
-                description: "Commit even if only meta.json changed"
+            force:
+                description: "Dump even if this cache was already processed"
                 type: boolean
                 default: false
 
@@ -34,42 +34,60 @@ jobs:
 
             - run: npm ci
 
-            # ~220 MB from OpenRS2. Not cached: a fresh cache is the point of the run.
-            - name: Download latest OSRS cache
+            # Compares the newest cache in the archive against data/meta.json's
+            # cacheId. One small JSON fetch - no cache download.
+            - name: Check for a new cache
+              id: check
+              run: npm run check-cache
+
+            - name: Up to date
+              if: steps.check.outputs.needed != 'true' && !inputs.force
+              run: |
+                  echo "Cache ${{ steps.check.outputs.cache_name }} already dumped; nothing to do." \
+                      >> "$GITHUB_STEP_SUMMARY"
+
+            # Everything below only runs when there is genuinely new data.
+            - name: Download cache
+              if: steps.check.outputs.needed == 'true' || inputs.force
               run: npm run download-cache
 
             - name: Dump
+              if: steps.check.outputs.needed == 'true' || inputs.force
               run: |
                   VIEWER_COMMIT=$(git -C vendor/rs-map-viewer rev-parse HEAD)
                   export VIEWER_COMMIT
                   npm run dump
 
             - name: Commit data
+              if: steps.check.outputs.needed == 'true' || inputs.force
               run: |
                   git config user.name  "github-actions[bot]"
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
                   git add data/
 
                   # meta.json always changes (generatedAt), so ignore it when
-                  # deciding whether anything real moved.
-                  if git diff --cached --quiet -- data/ ':!data/meta.json' \
-                     && [ "${{ inputs.force_commit }}" != "true" ]; then
-                      echo "No data changes; skipping commit."
-                      git reset
+                  # deciding whether anything real moved. A new cache revision
+                  # with identical map data is possible and not worth a commit.
+                  if git diff --cached --quiet -- data/ ':!data/meta.json'; then
+                      echo "New cache ${{ steps.check.outputs.cache_name }}, but no data changes." \
+                          >> "$GITHUB_STEP_SUMMARY"
+                      # Still commit meta.json so cacheId advances and tomorrow's
+                      # run does not re-download this same cache.
+                      git commit -q -m "Record cache ${{ steps.check.outputs.cache_name }} (no data changes)"
+                      git push
                       exit 0
                   fi
 
                   REVISION=$(node -p "require('./data/meta.json').revision")
-                  git add data/
-                  git commit -m "Update dump for cache rev ${REVISION}"
+                  git commit -q -m "Update dump for cache rev ${REVISION}"
                   git push
 
             - name: Summary
-              if: always()
+              if: (steps.check.outputs.needed == 'true' || inputs.force) && always()
               run: |
                   if [ -f data/meta.json ]; then
                       {
-                          echo '### Dump summary'
+                          echo "### Dump summary"
                           echo '```json'
                           node -p "JSON.stringify(require('./data/meta.json').counts, null, 2)"
                           echo '```'

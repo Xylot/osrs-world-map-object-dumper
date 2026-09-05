@@ -368,6 +368,8 @@ write("npc-types.json", npcTypes);
 write("obj-types.json", objTypes);
 write("meta.json", {
     cache: cacheInfo.name,
+    // OpenRS2 archive id - what check-cache.ts compares to decide if a run is needed.
+    cacheId: rawInfo.id,
     revision: cacheInfo.revision,
     cacheTimestamp: cacheInfo.timestamp,
     generatedAt: new Date().toISOString(),
