@@ -14,30 +14,22 @@ const DATA_DIR = "./data";
 const VIEWER_DIR = "./vendor/rs-map-viewer";
 
 const MAP_SQUARE_SIZE = 64; // tiles per region edge
-const CHUNK_SIZE = 8; // tiles per chunk edge
-const CHUNKS_PER_REGION_EDGE = MAP_SQUARE_SIZE / CHUNK_SIZE;
 
 /**
- * Packed chunk key: regionId in the high bits, then chunkX and chunkY.
- * regionId is itself (mapX << 8) | mapY, so the whole key is:
+ * Region ("map square") id, the standard OSRS encoding:
  *
- *   ((mapX << 8 | mapY) << 6) | (chunkX << 3) | chunkY
+ *   regionId = (mapX << 8) | mapY
  *
- * Max value is ~4.19M, comfortably inside a JS safe integer.
+ * Each region is 64x64 tiles with its origin at (mapX * 64, mapY * 64).
  */
-function packChunkId(regionId: number, chunkX: number, chunkY: number): number {
-    return (regionId << 6) | (chunkX << 3) | chunkY;
+function regionIdOf(mapX: number, mapY: number): number {
+    return (mapX << 8) | mapY;
 }
 
-export function unpackChunkId(chunkId: number) {
-    const regionId = chunkId >> 6;
-    return {
-        regionId,
-        mapX: regionId >> 8,
-        mapY: regionId & 0xff,
-        chunkX: (chunkId >> 3) & 0x7,
-        chunkY: chunkId & 0x7,
-    };
+export function unpackRegionId(regionId: number) {
+    const mapX = regionId >> 8;
+    const mapY = regionId & 0xff;
+    return { mapX, mapY, baseX: mapX * MAP_SQUARE_SIZE, baseY: mapY * MAP_SQUARE_SIZE };
 }
 
 type LocInstance = {
@@ -172,7 +164,7 @@ function isNamed(id: number): boolean {
 
 // --- Decode every region -------------------------------------------------
 
-const chunks: Record<number, { locs: LocInstance[]; npcs?: number[]; objs?: number[] }> = {};
+const regions: Record<number, { locs: LocInstance[]; npcs?: number[]; objs?: number[] }> = {};
 const usedLocIds = new Set<number>();
 
 let regionCount = 0;
@@ -193,7 +185,7 @@ for (let mapX = 0; mapX < 256; mapX++) {
         }
         regionCount++;
 
-        const regionId = (mapX << 8) | mapY;
+        const regionId = regionIdOf(mapX, mapY);
         const baseX = mapX * MAP_SQUARE_SIZE;
         const baseY = mapY * MAP_SQUARE_SIZE;
 
@@ -220,12 +212,7 @@ for (let mapX = 0; mapX < 256; mapX++) {
                 keptInstances++;
                 usedLocIds.add(id);
 
-                const chunkId = packChunkId(
-                    regionId,
-                    Math.floor(localX / CHUNK_SIZE),
-                    Math.floor(localY / CHUNK_SIZE),
-                );
-                (chunks[chunkId] ??= { locs: [] }).locs.push({
+                (regions[regionId] ??= { locs: [] }).locs.push({
                     id,
                     x: baseX + localX,
                     y: baseY + localY,
@@ -261,36 +248,28 @@ const objSpawns: ObjSpawnJson[] = JSON.parse(fs.readFileSync(objSpawnPath, "utf8
 const usedNpcIds = new Set<number>();
 const usedObjIds = new Set<number>();
 
-function chunkIdForTile(x: number, y: number): number {
-    const mapX = Math.floor(x / MAP_SQUARE_SIZE);
-    const mapY = Math.floor(y / MAP_SQUARE_SIZE);
-    return packChunkId(
-        (mapX << 8) | mapY,
-        Math.floor((x - mapX * MAP_SQUARE_SIZE) / CHUNK_SIZE),
-        Math.floor((y - mapY * MAP_SQUARE_SIZE) / CHUNK_SIZE),
-    );
+function regionIdForTile(x: number, y: number): number {
+    return regionIdOf(Math.floor(x / MAP_SQUARE_SIZE), Math.floor(y / MAP_SQUARE_SIZE));
 }
 
 for (const spawn of npcSpawns) {
-    const chunkId = chunkIdForTile(spawn.x, spawn.y);
-    const chunk = (chunks[chunkId] ??= { locs: [] });
-    (chunk.npcs ??= []).push(spawn.id);
+    const region = (regions[regionIdForTile(spawn.x, spawn.y)] ??= { locs: [] });
+    (region.npcs ??= []).push(spawn.id);
     usedNpcIds.add(spawn.id);
 }
 for (const spawn of objSpawns) {
-    const chunkId = chunkIdForTile(spawn.x, spawn.y);
-    const chunk = (chunks[chunkId] ??= { locs: [] });
-    (chunk.objs ??= []).push(spawn.id);
+    const region = (regions[regionIdForTile(spawn.x, spawn.y)] ??= { locs: [] });
+    (region.objs ??= []).push(spawn.id);
     usedObjIds.add(spawn.id);
 }
 
 // Spawn lists are id-only, so dedupe them.
-for (const chunk of Object.values(chunks)) {
-    if (chunk.npcs) {
-        chunk.npcs = [...new Set(chunk.npcs)].sort((a, b) => a - b);
+for (const region of Object.values(regions)) {
+    if (region.npcs) {
+        region.npcs = [...new Set(region.npcs)].sort((a, b) => a - b);
     }
-    if (chunk.objs) {
-        chunk.objs = [...new Set(chunk.objs)].sort((a, b) => a - b);
+    if (region.objs) {
+        region.objs = [...new Set(region.objs)].sort((a, b) => a - b);
     }
 }
 
@@ -362,7 +341,7 @@ function write(fileName: string, value: unknown): void {
 }
 
 console.log("Writing:");
-write("chunks.json", chunks);
+write("regions.json", regions);
 write("loc-types.json", locTypes);
 write("npc-types.json", npcTypes);
 write("obj-types.json", objTypes);
@@ -374,12 +353,14 @@ write("meta.json", {
     cacheTimestamp: cacheInfo.timestamp,
     generatedAt: new Date().toISOString(),
     viewerCommit: process.env.VIEWER_COMMIT ?? null,
-    chunkIdFormat: "((mapX << 8 | mapY) << 6) | (chunkX << 3) | chunkY",
-    chunkSize: CHUNK_SIZE,
-    chunksPerRegionEdge: CHUNKS_PER_REGION_EDGE,
+    regionIdFormat: "(mapX << 8) | mapY",
+    regionSize: MAP_SQUARE_SIZE,
     counts: {
-        regions: regionCount,
-        chunks: Object.keys(chunks).length,
+        // Regions with loc data in the cache.
+        regionsWithLocData: regionCount,
+        // Keys in regions.json. Lower than the above: many regions contain only
+        // unnamed scenery and drop out entirely under the named-only filter.
+        regionsKeyed: Object.keys(regions).length,
         locInstancesTotal: totalInstances,
         locInstancesNamed: keptInstances,
         locTypes: usedLocIds.size,

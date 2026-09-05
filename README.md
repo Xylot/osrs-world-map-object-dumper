@@ -1,7 +1,7 @@
 # osrs-world-map-object-dumper
 
-Dumps every **named** map object in Old School RuneScape, keyed by packed chunk id, straight from
-the game cache. Regenerated weekly by GitHub Actions.
+Dumps every **named** map object in Old School RuneScape, keyed by region id, straight from the
+game cache. Regenerated automatically by GitHub Actions whenever a new cache appears.
 
 Cache decoding is done by [rs-map-viewer](https://github.com/dennisdev/rs-map-viewer), vendored as a
 pinned submodule under `vendor/`.
@@ -12,50 +12,52 @@ Everything lands in `data/`:
 
 | File | Size | Contents |
 | --- | --- | --- |
-| `chunks.json` | ~20 MB | chunk id → objects in that chunk |
+| `regions.json` | ~19 MB | region id → objects in that region |
 | `loc-types.json` | ~4 MB | loc id → name, actions, morph forms |
 | `npc-types.json` | ~0.4 MB | npc id → name, actions, combat level |
 | `obj-types.json` | ~0.1 MB | item id → name, ground actions |
 | `meta.json` | tiny | cache revision, counts, generation time |
 
-Type tables are separate rather than inlined per instance — 41,800 loc types repeated across 5M
-instances is what turns a 20 MB file into a 300 MB one.
+Type tables are separate rather than inlined per instance — names and actions repeated across every
+instance is what would turn a 19 MB file into a 300 MB one.
 
-### Chunk ids
+### Region ids
 
-A chunk is 8×8 tiles; a region ("map square") is 64×64, so 8×8 chunks per region.
+A region (a "map square") is 64×64 tiles, using the standard OSRS encoding:
 
 ```
-chunkId = ((mapX << 8 | mapY) << 6) | (chunkX << 3) | chunkY
+regionId = (mapX << 8) | mapY
 ```
 
-`mapX << 8 | mapY` is the familiar region id, so region 12582 chunk 5,5 is `805293`. Max value is
-about 4.19M, well inside a JS safe integer. To go back:
+So region `12582` is mapX 49, mapY 38, with its south-west corner at world tile (3136, 2432). To go
+back:
 
 ```js
-const regionId = chunkId >> 6;
 const mapX = regionId >> 8;
 const mapY = regionId & 0xff;
-const chunkX = (chunkId >> 3) & 0x7;
-const chunkY = chunkId & 0x7;
+const baseX = mapX * 64;
+const baseY = mapY * 64;
 ```
 
-`unpackChunkId` is exported from `scripts/dump.ts` if you'd rather import it.
+`unpackRegionId` is exported from `scripts/dump.ts` if you'd rather import it.
 
 ### Shape
 
 ```jsonc
-// chunks.json
+// regions.json
 {
-  "805293": {
+  "12582": {
     "locs": [
-      { "id": 58439, "x": 3176, "y": 2477, "level": 0, "type": 10, "rotation": 2 }
+      { "id": 58439, "x": 3176, "y": 2477, "level": 0, "type": 10, "rotation": 1 }
     ],
-    "npcs": [3106],   // present only if the chunk has spawns
+    "npcs": [3106],   // present only if the region has spawns
     "objs": [995]
   }
 }
 ```
+
+Loc coordinates are absolute world tiles. Subtract `baseX`/`baseY` for region-local (0–63), or
+divide those by 8 for an 8×8 chunk index.
 
 `type` is rs-map-viewer's `LocModelType` (0–3 walls, 4–8 wall decorations, 10–11 normal, 12–21
 roofs, 22 floor decoration).
